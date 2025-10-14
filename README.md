@@ -1,8 +1,8 @@
-# Demo Recorder
+# ScreenPeg
 
 This directory contains a script for recording screen demos for the project.
 
-## record_demo.sh
+## screenpeg.sh
 
 A `bash` script that uses `ffmpeg` to record the screen, with options for different resolutions, audio, and webcam overlays.
 
