@@ -5,18 +5,22 @@ OUTPUT_DIR="." # Directory to save recordings
 WEBCAM_DEVICE="/dev/video0" # Your webcam device
 AUDIO_SOURCE="default" # PulseAudio source (use `pactl list sources` to find others)
 
+# --- Auto-detect Session Type ---
+SESSION_TYPE=${XDG_SESSION_TYPE:-"x11"}
+
 # --- Script Logic ---
 clear
 echo "========================================"
 echo " FFmpeg Screen & Demo Recorder"
 echo "========================================"
+echo "Detected session type: $SESSION_TYPE"
 echo
 
 # 1. Generate a unique filename
 FILENAME="$OUTPUT_DIR/recording_$(date +%Y-%m-%d_%H-%M-%S).mp4"
 
 # 2. Select Resolution
-echo "Please select a recording resolution:"
+echo "Please select an OUTPUT resolution:"
 echo " 1) 144p (256x144)"
 echo " 2) 240p (426x240)"
 echo " 3) 360p (640x360)"
@@ -24,7 +28,7 @@ echo " 4) 480p (854x480)"
 echo " 5) 720p (1280x720)"
 echo " 6) 1080p (1920x1080)"
 echo " 7) 2160p/4K (3840x2160)"
-echo " 8) Full Screen (Your current resolution)"
+echo " 8) Full Screen (Native resolution, no scaling)"
 echo
 
 read -p "Enter your choice [8]: " resolution_choice
@@ -38,7 +42,7 @@ case $resolution_choice in
     5) RESOLUTION="1280x720" ;;
     6) RESOLUTION="1920x1080" ;;
     7) RESOLUTION="3840x2160" ;;
-    8) RESOLUTION=$(xdpyinfo | grep dimensions | awk '{print $2;}') ;;
+    8) RESOLUTION="fullscreen" ;; # Special keyword for no scaling
     *) echo "Invalid choice. Exiting."; exit 1 ;;
 esac
 
@@ -52,60 +56,85 @@ record_webcam=${record_webcam:-n}
 
 
 # 5. Build the ffmpeg command
-FFMPEG_CMD="ffmpeg"
+FFMPEG_ARGS=()
 
 # --- Video Inputs ---
-# Main screen input
-FFMPEG_CMD+=" -f x11grab -s $RESOLUTION -i :0.0"
+if [ "$SESSION_TYPE" = "wayland" ]; then
+    # Wayland: Use PipeWire to capture the screen. This will trigger a desktop dialog.
+    FFMPEG_ARGS+=( -f pipewire -framerate 30 -i screen )
+else
+    # X11: Use x11grab. Capture at native resolution.
+    X11_RES=$(xdpyinfo | grep dimensions | awk '{print $2;}')
+    FFMPEG_ARGS+=( -f x11grab -framerate 30 -s "$X11_RES" -i :0.0 )
+fi
 
 # Optional webcam input
 if [[ "$record_webcam" =~ ^[Yy]$ ]]; then
-    FFMPEG_CMD+=" -f v4l2 -i $WEBCAM_DEVICE"
+    FFMPEG_ARGS+=( -f v4l2 -i "$WEBCAM_DEVICE" )
 fi
 
 # --- Audio Input ---
 if [[ "$record_mic" =~ ^[Yy]$ ]]; then
-    FFMPEG_CMD+=" -f pulse -i $AUDIO_SOURCE"
+    FFMPEG_ARGS+=( -f pulse -i "$AUDIO_SOURCE" )
 fi
 
 # --- Codecs and Filters ---
-# Video codec
-FFMPEG_CMD+=" -c:v libx264 -preset ultrafast -pix_fmt yuv420p"
+VIDEO_FILTERS=""
 
-# Audio codec
-if [[ "$record_mic" =~ ^[Yy]$ ]]; then
-    FFMPEG_CMD+=" -c:a aac -b:a 128k"
+# Scaling filter
+if [ "$RESOLUTION" != "fullscreen" ]; then
+    VIDEO_FILTERS+="scale=$RESOLUTION"
 fi
 
 # Picture-in-Picture Filtergraph
 if [[ "$record_webcam" =~ ^[Yy]$ ]]; then
-    # [0:v] is the screen, [1:v] is the webcam
-    FFMPEG_CMD+=" -filter_complex '[1:v] scale=320:-1 [pip]; [0:v][pip] overlay=main_w-overlay_w-10:main_h-overlay_h-10'"
+    if [ -n "$VIDEO_FILTERS" ]; then
+        # If we are already scaling, chain the filters
+        VIDEO_FILTERS="[0:v]${VIDEO_FILTERS}[scaled]; [1:v]scale=320:-1[pip]; [scaled][pip]overlay=main_w-overlay_w-10:main_h-overlay_h-10"
+    else
+        # No other filters, just do the overlay
+        VIDEO_FILTERS="[1:v]scale=320:-1[pip]; [0:v][pip]overlay=main_w-overlay_w-10:main_h-overlay_h-10"
+    fi
+    FFMPEG_ARGS+=( -filter_complex "$VIDEO_FILTERS" )
+elif [ -n "$VIDEO_FILTERS" ]; then
+    # Only scaling filter is present
+    FFMPEG_ARGS+=( -vf "$VIDEO_FILTERS" )
+fi
+
+# Video codec
+FFMPEG_ARGS+=( -c:v libx264 -preset ultrafast -pix_fmt yuv420p )
+
+# Audio codec
+if [[ "$record_mic" =~ ^[Yy]$ ]]; then
+    FFMPEG_ARGS+=( -c:a aac -b:a 128k )
 fi
 
 # --- Output File ---
-FFMPEG_CMD+=" $FILENAME"
+FFMPEG_ARGS+=( "$FILENAME" )
 
 
 # 6. Execute the command
 echo
 echo "======================================================================"
 echo "Starting recording..."
-echo "Resolution: $RESOLUTION"
+if [ "$RESOLUTION" = "fullscreen" ]; then
+    echo "Resolution: Native Fullscreen"
+else
+    echo "Resolution: $RESOLUTION"
+fi
 echo "Filename: $FILENAME"
 echo
-echo ">>> PRESS 'q' IN THIS TERMINAL TO STOP RECORDING <<<"
+echo ">>> A desktop dialog may appear asking for screen sharing permission. <<< "
+echo ">>> PRESS 'q' OR 'Ctrl+C' IN THIS TERMINAL TO STOP RECORDING <<< "
 echo "======================================================================"
 echo
 
-# Print the command for debugging
-# echo "Running command:"
-# echo "$FFMPEG_CMD"
-
-eval $FFMPEG_CMD
+ffmpeg "${FFMPEG_ARGS[@]}"
 
 echo
 echo "========================================"
 echo "Recording stopped."
 echo "File saved to: $FILENAME"
 echo "========================================"
+
+exit 0
