@@ -16,10 +16,43 @@ echo "========================================"
 echo "Detected session type: $SESSION_TYPE"
 echo
 
-# 1. Generate a unique filename
-FILENAME="$OUTPUT_DIR/recording_$(date +%Y-%m-%d_%H-%M-%S).mp4"
+# 1. Select Output Directory
+read -p "Enter the output directory [.] (current directory): " OUTPUT_DIR
+OUTPUT_DIR=${OUTPUT_DIR:-.} # Default to current directory if empty
 
-# 2. Select Resolution
+# Create directory if it doesn't exist
+if [ ! -d "$OUTPUT_DIR" ]; then
+    read -p "Directory '$OUTPUT_DIR' does not exist. Create it? (y/n) [y]: " create_dir
+    create_dir=${create_dir:-y}
+    if [[ "$create_dir" =~ ^[Yy]$ ]]; then
+        mkdir -p "$OUTPUT_DIR" || { echo "Failed to create directory. Exiting."; exit 1; }
+        echo "Directory created: $OUTPUT_DIR"
+    else
+        echo "Output directory not found. Exiting."
+        exit 1
+    fi
+fi
+echo
+
+# 2. Generate a unique filename
+echo "Please select an OUTPUT format:"
+echo " 1) .mp4 (Default)"
+echo " 2) .mkv"
+echo " 3) .mov"
+echo
+read -p "Enter your choice [1]: " format_choice
+format_choice=${format_choice:-1} # Default to 1 if empty
+
+case $format_choice in
+    1) FILE_EXTENSION="mp4" ;;
+    2) FILE_EXTENSION="mkv" ;;
+    3) FILE_EXTENSION="mov" ;;
+    *) echo "Invalid choice. Using default .mp4"; FILE_EXTENSION="mp4" ;;
+esac
+
+FILENAME="$OUTPUT_DIR/screenpeg-rec_$(date +%Y-%m-%d_%H-%M-%S).$FILE_EXTENSION"
+
+# 3. Select Resolution
 echo "Please select an OUTPUT resolution:"
 echo " 1) 144p (256x144)"
 echo " 2) 240p (426x240)"
