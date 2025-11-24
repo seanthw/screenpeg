@@ -6,6 +6,19 @@ This directory contains a script for recording screen demos for the project.
 
 A `bash` script that uses `ffmpeg` to record the screen, with options for different resolutions, audio, and webcam overlays.
 
+## Requirements
+
+This script requires `ffmpeg` and a few other utilities to be installed.
+
+*   **`ffmpeg`**: The core dependency for all recording and encoding.
+*   **`wf-recorder`**: Required for screen capture on Wayland sessions.
+*   **`xorg-xdpyinfo`**: Used to detect screen resolution.
+
+On Arch Linux, you can install all dependencies with the following command:
+```bash
+sudo pacman -S ffmpeg wf-recorder xorg-xdpyinfo
+```
+
 ### Features
 
 *   **Cross-Platform:** Automatically detects and supports both X11 and Wayland display servers.
