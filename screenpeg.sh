@@ -8,6 +8,16 @@ AUDIO_SOURCE="default" # PulseAudio source (use `pactl list sources` to find oth
 # --- Auto-detect Session Type ---
 SESSION_TYPE=${XDG_SESSION_TYPE:-"x11"}
 
+# --- Check for Wayland dependencies ---
+if [ "$SESSION_TYPE" = "wayland" ]; then
+    if ! command -v wf-recorder &> /dev/null
+    then
+        echo "Error: wf-recorder is required for screen recording on Wayland." >&2
+        echo "Please install it (e.g., 'sudo pacman -S wf-recorder' on Arch Linux). Exiting." >&2
+        exit 1
+    fi
+fi
+
 # --- Script Logic ---
 clear
 echo "========================================"
@@ -93,8 +103,11 @@ FFMPEG_ARGS=()
 
 # --- Video Inputs ---
 if [ "$SESSION_TYPE" = "wayland" ]; then
-    # Wayland: Use PipeWire to capture the screen. This will trigger a desktop dialog.
-    FFMPEG_ARGS+=( -f pipewire -framerate 30 -i screen )
+    # Use a named pipe for wf-recorder output to ffmpeg
+    PIPE_NAME="/tmp/screenpeg-pipe.$$"
+    trap 'rm -f "$PIPE_NAME"' EXIT
+    mkfifo "$PIPE_NAME"
+    FFMPEG_ARGS+=( -y -f matroska -i "$PIPE_NAME" )
 else
     # X11: Use x11grab. Capture at native resolution.
     X11_RES=$(xdpyinfo | grep dimensions | awk '{print $2;}')
@@ -135,6 +148,7 @@ elif [ -n "$VIDEO_FILTERS" ]; then
 fi
 
 # Video codec
+ENCODER_INFO="libx264 (CPU)"
 FFMPEG_ARGS+=( -c:v libx264 -preset ultrafast -pix_fmt yuv420p )
 
 # Audio codec
@@ -155,14 +169,35 @@ if [ "$RESOLUTION" = "fullscreen" ]; then
 else
     echo "Resolution: $RESOLUTION"
 fi
+echo "Encoder: $ENCODER_INFO"
 echo "Filename: $FILENAME"
 echo
+if [[ "$record_webcam" =~ ^[Yy]$ ]]; then
+    echo ">>> Please note: Webcam may take a moment to initialize. <<< "
+fi
 echo ">>> A desktop dialog may appear asking for screen sharing permission. <<< "
 echo ">>> PRESS 'q' OR 'Ctrl+C' IN THIS TERMINAL TO STOP RECORDING <<< "
 echo "======================================================================"
 echo
 
-ffmpeg "${FFMPEG_ARGS[@]}"
+if [ "$SESSION_TYPE" = "wayland" ]; then
+    # Start wf-recorder writing to the pipe in the background
+    WF_RECORDER_ARGS=()
+    if [ "$RESOLUTION" != "fullscreen" ]; then
+        WF_RECORDER_ARGS+=( -g "$RESOLUTION" )
+    fi
+    wf-recorder "${WF_RECORDER_ARGS[@]}" --muxer=matroska -f "$PIPE_NAME" & 
+    WF_RECORDER_PID=$!
+
+    # ffmpeg reads from the pipe (which is already in FFMPEG_ARGS)
+    ffmpeg "${FFMPEG_ARGS[@]}"
+
+    # Wait for wf-recorder to finish and clean up
+    wait $WF_RECORDER_PID
+    rm "$PIPE_NAME"
+elif [ "$SESSION_TYPE" = "x11" ]; then
+    ffmpeg "${FFMPEG_ARGS[@]}"
+fi
 
 echo
 echo "========================================"
